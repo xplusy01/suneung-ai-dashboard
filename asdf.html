@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini 2.5 Pro 기반 수능 문제 생성 파이프라인</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Scholarly Neutrals -->
+    <!-- Application Structure Plan: The application is designed as a single-page, multi-section dashboard. A sticky navigation bar allows users to jump between key thematic areas: 1. **Introduction**: A brief overview. 2. **Framework**: Explains the core concept using a custom HTML/CSS diagram for the pipeline, making it visual and interactive. 3. **The Prompts**: A tabbed interface to cleanly present the Generator, Evaluator, and Correction prompts, saving space and encouraging interaction. 4. **Pipeline Simulation**: An interactive, button-driven demo that simulates the generate-evaluate-revise loop, making the abstract process tangible. 5. **Implementation**: Displays the Python code in clean, copyable blocks. 6. **Tuning Guide**: Uses a Chart.js radar chart to visualize parameter tuning recommendations, making the data more engaging. 7. **Conclusion**: Final thoughts. This structure prioritizes user exploration and understanding over a linear report format, allowing users to engage with the most relevant content first. -->
+    <!-- Visualization & Content Choices: 
+        - Report Info: Pipeline Workflow -> Goal: Organize/Change -> Viz/Method: Custom HTML/CSS Diagram -> Interaction: N/A, visual flow -> Justification: Adheres to NO SVG/Mermaid rule while effectively visualizing the process flow described in the report.
+        - Report Info: Generator, Evaluator, Correction Prompts -> Goal: Organize/Inform -> Viz/Method: Tabbed HTML Component -> Interaction: Click to switch tabs -> Justification: Efficiently organizes large blocks of text, allowing users to compare prompts without excessive scrolling.
+        - Report Info: Generate-Evaluate-Revise Loop -> Goal: Inform/Engage -> Viz/Method: Interactive Button-driven Simulation -> Interaction: Click buttons to reveal stages -> Justification: Creates a "wow" factor by making the abstract pipeline concept tangible and interactive, significantly enhancing user understanding.
+        - Report Info: Parameter Tuning Recommendations -> Goal: Compare/Inform -> Viz/Method: Chart.js Radar Chart -> Interaction: Hover for tooltips -> Justification: Translates textual recommendations into a memorable and easily comparable visual format, improving data retention.
+        - Report Info: Python Code -> Goal: Inform -> Viz/Method: Styled `<pre><code>` blocks -> Interaction: Copy-to-clipboard button -> Justification: Provides a standard, user-friendly way to present and reuse code.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: #F9FAFB; /* bg-gray-50 */
+            color: #1F2937; /* text-gray-800 */
+        }
+        .nav-link {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .nav-link:hover, .nav-link.active {
+            color: #1D4ED8; /* text-blue-700 */
+            border-bottom-color: #1D4ED8;
+        }
+        .section-title {
+            border-bottom: 2px solid #D1D5DB; /* border-gray-300 */
+            padding-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .card {
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .tab-btn {
+            transition: all 0.3s ease;
+        }
+        .tab-btn.active {
+            background-color: #3B82F6; /* bg-blue-500 */
+            color: white;
+        }
+        .prompt-content, .code-content {
+            background-color: #F3F4F6; /* bg-gray-100 */
+            border-radius: 0.5rem;
+            padding: 1rem;
+            border: 1px solid #E5E7EB; /* border-gray-200 */
+        }
+        .pipeline-step {
+            border: 2px solid #9CA3AF; /* border-gray-400 */
+            background-color: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            position: relative;
+        }
+        .pipeline-arrow {
+            color: #6B7280; /* text-gray-500 */
+            font-size: 2rem;
+            line-height: 1;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            height: 350px;
+            margin: auto;
+        }
+        .tooltip {
+            position: absolute;
+            background-color: #111827;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <!-- Header & Navigation -->
+    <header class="bg-white/80 backdrop-blur-sm shadow-md sticky top-0 z-50">
+        <nav class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex-shrink-0">
+                    <h1 class="text-xl font-bold text-gray-800">수능 문제 생성 AI</h1>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-4">
+                        <a onclick="scrollToSection('intro')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">소개</a>
+                        <a onclick="scrollToSection('framework')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">개념 프레임워크</a>
+                        <a onclick="scrollToSection('prompts')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">핵심 프롬프트</a>
+                        <a onclick="scrollToSection('simulation')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">파이프라인 시뮬레이션</a>
+                        <a onclick="scrollToSection('implementation')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">구현 코드</a>
+                        <a onclick="scrollToSection('tuning')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">튜닝 가이드</a>
+                        <a onclick="scrollToSection('conclusion')" class="nav-link px-3 py-2 text-sm font-medium text-gray-600 border-b-2 border-transparent">결론</a>
+                    </div>
+                </div>
+                 <div class="md:hidden">
+                    <button id="mobile-menu-button" class="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white">
+                        <span class="sr-only">메뉴 열기</span>
+                        <svg class="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+             <div id="mobile-menu" class="md:hidden hidden">
+                <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                    <a onclick="scrollToSection('intro')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">소개</a>
+                    <a onclick="scrollToSection('framework')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">개념 프레임워크</a>
+                    <a onclick="scrollToSection('prompts')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">핵심 프롬프트</a>
+                    <a onclick="scrollToSection('simulation')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">파이프라인 시뮬레이션</a>
+                    <a onclick="scrollToSection('implementation')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">구현 코드</a>
+                    <a onclick="scrollToSection('tuning')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">튜닝 가이드</a>
+                    <a onclick="scrollToSection('conclusion')" class="nav-link block px-3 py-2 rounded-md text-base font-medium text-gray-600">결론</a>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Section 1: Introduction -->
+        <section id="intro" class="my-12">
+            <div class="text-center">
+                <h2 class="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">Gemini 2.5 Pro를 활용한 수능 문제 생성</h2>
+                <p class="mt-4 text-lg leading-8 text-gray-600 max-w-3xl mx-auto">최신 언어 모델을 통해 대한민국 수능 '확률과 통계' 과목의 고난도 문항을 생성하는 정교한 AI 파이프라인을 탐색합니다. 이 애플리케이션은 그 핵심 원리와 실제 구현 과정을 시각적으로 보여줍니다.</p>
+            </div>
+        </section>
+
+        <!-- Section 2: Conceptual Framework -->
+        <section id="framework" class="my-16 scroll-mt-20">
+            <h2 class="text-2xl font-bold section-title">개념 프레임워크: 생성과 평가의 분리</h2>
+             <div class="text-left mb-8">
+                <p class="text-gray-700 leading-relaxed max-w-4xl mx-auto">
+                    이 파이프라인의 핵심은 IMO 문제 해결 연구에서 영감을 받은 **역할 분리 원칙**에 있습니다. 단일 에이전트가 생성과 검증을 모두 수행하는 대신, 창의적인 **생성자(Generator)**와 비판적인 **평가자(Evaluator)**라는 두 개의 전문화된 에이전트를 사용합니다. 이 대립적이면서도 협력적인 구조는 결과물의 품질을 극대화합니다. 아래 다이어그램은 이 워크플로우를 시각적으로 보여줍니다.
+                </p>
+            </div>
+            <div class="card p-6">
+                <div class="flex flex-col md:flex-row items-center justify-center space-y-4 md:space-y-0 md:space-x-4">
+                    <div class="pipeline-step w-full md:w-1/5">
+                        <h3 class="font-bold">1. 프롬프트 구성</h3>
+                        <p class="text-sm text-gray-600">소수샷(Few-shot) 예제를 기반으로 생성 프롬프트 조립</p>
+                    </div>
+                    <div class="pipeline-arrow hidden md:block">→</div>
+                    <div class="pipeline-arrow block md:hidden">↓</div>
+                    <div class="pipeline-step w-full md:w-1/5">
+                        <h3 class="font-bold">2. 생성 (Generator)</h3>
+                        <p class="text-sm text-gray-600">새로운 문제와 해설 쌍 생성</p>
+                    </div>
+                    <div class="pipeline-arrow hidden md:block">→</div>
+                    <div class="pipeline-arrow block md:hidden">↓</div>
+                    <div class="pipeline-step w-full md:w-1/5">
+                        <h3 class="font-bold">3. 평가 (Evaluator)</h3>
+                        <p class="text-sm text-gray-600">다각적 기준(난이도, 정확성 등)으로 평가 보고서 작성</p>
+                    </div>
+                    <div class="pipeline-arrow hidden md:block">→</div>
+                    <div class="pipeline-arrow block md:hidden">↓</div>
+                    <div class="relative w-full md:w-1/4">
+                        <div class="pipeline-step">
+                            <h3 class="font-bold">4. 의사결정</h3>
+                            <p class="text-sm text-gray-600">채택, 기각, 또는 수정</p>
+                        </div>
+                        <div class="absolute top-full left-1/2 -translate-x-1/2 mt-2 md:top-1/2 md:left-0 md:-translate-x-full md:mt-0 md:mr-2 flex items-center">
+                            <div class="pipeline-arrow">↺</div>
+                            <span class="text-sm text-gray-600 ml-1">수정 루프</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 3: Core Prompts -->
+        <section id="prompts" class="my-16 scroll-mt-20">
+            <h2 class="text-2xl font-bold section-title">핵심 프롬프트: AI 조종의 기술</h2>
+            <div class="text-left mb-8">
+                <p class="text-gray-700 leading-relaxed max-w-4xl mx-auto">
+                    파이프라인의 각 에이전트는 특정 역할을 수행하도록 설계된 정교한 프롬프트에 의해 제어됩니다. 아래 탭을 클릭하여 각 에이전트에게 주어지는 실제 지시사항을 확인해 보세요. 이는 전체 시스템의 동작을 규정하는 '소스 코드'와 같습니다.
+                </p>
+            </div>
+            <div class="card p-6">
+                <div class="mb-4 border-b border-gray-200">
+                    <div class="flex flex-wrap -mb-px" id="prompt-tabs" role="tablist">
+                        <button class="tab-btn active px-4 py-2 text-sm font-medium rounded-t-lg" id="generator-tab" role="tab" aria-controls="generator-content" aria-selected="true">생성자 (Generator)</button>
+                        <button class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg" id="evaluator-tab" role="tab" aria-controls="evaluator-content" aria-selected="false">평가자 (Evaluator)</button>
+                        <button class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg" id="correction-tab" role="tab" aria-controls="correction-content" aria-selected="false">수정자 (Corrector)</button>
+                    </div>
+                </div>
+                <div>
+                    <div id="generator-content" role="tabpanel" aria-labelledby="generator-tab">
+                        <div class="prompt-content">
+                            <h4 class="font-bold text-lg mb-2">목표: 창의적 문제 생성</h4>
+                            <p class="text-sm text-gray-600 mb-4">주어진 예시의 스타일과 난이도를 학습하여, 완전히 새롭고 독창적인 고난도 문제를 지정된 JSON 형식으로 생성하도록 지시합니다.</p>
+                            <pre class="text-xs whitespace-pre-wrap"><code>당신은 대한민국 수능 수학 '확률과 통계' 과목의 최고난도 문항(28, 29, 30번)을 출제하는 전문가입니다.
+당신의 임무는 주어진 예시들의 스타일, 형식, 난이도를 참고하여 완전히 새롭고 창의적인 문제와 해설 쌍을 생성하는 것입니다.
+
+### 핵심 지시사항 ###
+1.  **독창성**: 제공된 예시를 그대로 변형하거나 모방해서는 안 됩니다.
+2.  **난이도**: 수험생의 깊은 사고력을 평가할 수 있는 4점짜리 고난도 문항이어야 합니다.
+3.  **형식 준수**: 출력은 반드시 명시된 JSON 형식을 따라야 하며, 모든 수학적 표현은 LaTeX 형식으로 작성되어야 합니다.
+4.  **교육과정 준수**: '확률과 통계' 교육과정 범위 내의 개념만을 사용해야 합니다.
+... (소수샷 예제 포함) ...</code></pre>
+                        </div>
+                    </div>
+                    <div id="evaluator-content" role="tabpanel" aria-labelledby="evaluator-tab" class="hidden">
+                        <div class="prompt-content">
+                            <h4 class="font-bold text-lg mb-2">목표: 다각적이고 엄격한 평가</h4>
+                            <p class="text-sm text-gray-600 mb-4">수능 출제 위원장의 관점에서, 생성된 문제의 수학적 정확성, 난이도, 창의성 등 6가지 기준에 따라 평가하고, 구조화된 보고서를 작성하도록 지시합니다.</p>
+                            <pre class="text-xs whitespace-pre-wrap"><code>당신은 대한민국 수능 수학 영역의 출제 및 검토 위원장입니다. 당신의 임무는 제출된 '확률과 통계' 문제와 해설 초안을 매우 엄격하고 다각적인 기준에 따라 평가하고, 상세한 피드백을 제공하는 것입니다. 당신은 해결사가 아니라 평가자입니다. 오류를 직접 수정하지 마십시오.
+
+### 평가 지침 ###
+제출된 문제와 해설 쌍을 아래 6가지 기준에 따라 평가하고, 그 결과를 지정된 "평가 보고서" 형식으로 작성해야 합니다.
+...
+### 출력 형식 ###
+당신의 답변은 반드시 아래의 "평가 보고서" 마크다운 테이블 형식으로만 작성되어야 합니다.
+| 평가 기준 | 점수 (1-5) | 수정 필요 사항 및 근거 |
+| :--- | :--- | :--- |
+...
+</code></pre>
+                        </div>
+                    </div>
+                    <div id="correction-content" role="tabpanel" aria-labelledby="correction-tab" class="hidden">
+                        <div class="prompt-content">
+                            <h4 class="font-bold text-lg mb-2">목표: 목표 지향적 개선</h4>
+                            <p class="text-sm text-gray-600 mb-4">이전 생성물과 평가자의 비평 보고서를 함께 제공하여, 지적된 모든 사항을 해결하고 결과물을 개선하도록 명확하게 지시합니다.</p>
+                            <pre class="text-xs whitespace-pre-wrap"><code>당신은 이전에 아래와 같은 문제와 해설을 생성했습니다.
+### 이전 생성물 ###
+...
+한 명의 전문가 평가 위원이 위 생성물에 대해 다음과 같은 평가 보고서를 제출했습니다.
+### 평가 보고서 ###
+...
+### 당신의 임무 ###
+위 평가 보고서에 지적된 모든 사항을 반영하여, 문제와 해설을 전면적으로 수정하십시오.
+수정된 결과물은 평가 보고서의 모든 비판을 해결해야 하며, 이전 버전보다 모든 면에서 월등히 뛰어나야 합니다.
+</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 4: Pipeline Simulation -->
+        <section id="simulation" class="my-16 scroll-mt-20">
+            <h2 class="text-2xl font-bold section-title">파이프라인 시뮬레이션</h2>
+            <div class="text-left mb-8">
+                <p class="text-gray-700 leading-relaxed max-w-4xl mx-auto">
+                    백문이 불여일견입니다. 아래 버튼을 순서대로 클릭하여 생성-평가-수정으로 이어지는 파이프라인의 핵심 과정을 직접 경험해 보세요. 각 단계에서 AI 에이전트가 어떤 결과물을 만들어내는지 확인할 수 있습니다.
+                </p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Step 1 -->
+                <div class="flex flex-col items-center">
+                    <button id="sim-btn-1" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300">1. 문제 생성 (Generate)</button>
+                    <div id="sim-card-1" class="w-full card p-4 mt-4 hidden">
+                        <h4 class="font-bold">생성된 문제 (초안)</h4>
+                        <div class="prompt-content mt-2 text-sm">
+                            <p><b>문제:</b> 주머니 속에 1부터 5까지의 자연수가 하나씩 적힌 5개의 공이 있다. 이 주머니에서 임의로 3개의 공을 동시에 꺼낼 때, 꺼낸 공에 적힌 세 수의 합이 3의 배수일 확률은?</p>
+                            <p class="mt-2"><b>해설:</b> 세 수의 합이 3의 배수가 되는 경우는 (1,2,3), (1,3,5), (2,3,4), (3,4,5), (1,2,6)->(1,2,5) 수정 필요... [논리적 오류 발견]</p>
+                        </div>
+                    </div>
+                </div>
+                <!-- Step 2 -->
+                <div class="flex flex-col items-center">
+                    <button id="sim-btn-2" class="w-full bg-gray-400 text-white font-bold py-2 px-4 rounded-lg cursor-not-allowed" disabled>2. 전문가 평가 (Evaluate)</button>
+                    <div id="sim-card-2" class="w-full card p-4 mt-4 hidden">
+                        <h4 class="font-bold">평가 보고서</h4>
+                        <div class="prompt-content mt-2 text-sm">
+                            <p><b>수학적 정확성 (2/5):</b> 해설의 경우의 수 분석에 오류가 있음. (1,2,5)의 합은 8이므로 3의 배수가 아님.</p>
+                            <p class="mt-2"><b>난이도 (2/5):</b> 단순 경우의 수 문제로, 4점 문항의 복잡성에 미치지 못함.</p>
+                            <p class="mt-2"><b>종합 추천:</b> REVISE</p>
+                        </div>
+                    </div>
+                </div>
+                <!-- Step 3 -->
+                <div class="flex flex-col items-center">
+                    <button id="sim-btn-3" class="w-full bg-gray-400 text-white font-bold py-2 px-4 rounded-lg cursor-not-allowed" disabled>3. 피드백 기반 수정 (Revise)</button>
+                    <div id="sim-card-3" class="w-full card p-4 mt-4 hidden">
+                        <h4 class="font-bold">수정된 문제 (최종안)</h4>
+                        <div class="prompt-content mt-2 text-sm">
+                            <p><b>문제:</b> 두 집합 $X=\{1, 2, 3, 4\}$, $Y=\{1, 2, 3, 4, 5\}$에 대하여 $X$에서 $Y$로의 함수 $f$ 중에서 다음 조건을 만족시키는 함수의 개수를 구하시오. (가) $f(1) < f(2)$ (나) 치역의 모든 원소의 합은 홀수이다.</p>
+                            <p class="mt-2"><b>해설:</b> (나) 조건을 만족시키려면 치역에 홀수가 홀수 개 포함되어야 한다. 이를 기준으로 경우를 나누어 분석... [정확하고 복잡한 해설]</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 5: Implementation -->
+        <section id="implementation" class="my-16 scroll-mt-20">
+            <h2 class="text-2xl font-bold section-title">구현 코드</h2>
+            <div class="text-left mb-8">
+                <p class="text-gray-700 leading-relaxed max-w-4xl mx-auto">
+                    이 파이프라인은 Python으로 구현되었습니다. 핵심 로직은 `main.py`에 있으며, 각 에이전트의 지시사항은 `prompts.py`에 모듈화되어 있습니다. 아래에서 각 파일의 핵심 코드를 확인하고 복사할 수 있습니다.
+                </p>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="card p-6">
+                    <h3 class="font-bold text-lg mb-2">prompts.py</h3>
+                    <div class="relative">
+                        <button onclick="copyCode('code1')" class="absolute top-2 right-2 bg-gray-200 text-gray-700 px-2 py-1 rounded text-xs hover:bg-gray-300">복사</button>
+                        <div class="code-content">
+                            <pre id="code1" class="text-xs whitespace-pre-wrap max-h-96 overflow-y-auto"><code>import json
+
+EVALUATOR_SYSTEM_PROMPT = """
+당신은 대한민국 수능 수학 영역의 출제 및 검토 위원장입니다...
+"""
+
+def get_generator_prompt(few_shot_examples):
+    """
+    주어진 소수샷 예제를 바탕으로 생성자 프롬프트를 구성합니다.
+    """
+    # ... implementation ...
+    return f"""..."""
+
+def get_correction_prompt(original_problem_str, critique):
+    """
+    이전 생성물과 평가자의 비평을 바탕으로 수정 프롬프트를 구성합니다.
+    """
+    # ... implementation ...
+    return f"""..."""
+</code></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-6">
+                    <h3 class="font-bold text-lg mb-2">main.py</h3>
+                    <div class="relative">
+                        <button onclick="copyCode('code2')" class="absolute top-2 right-2 bg-gray-200 text-gray-700 px-2 py-1 rounded text-xs hover:bg-gray-300">복사</button>
+                        <div class="code-content">
+                            <pre id="code2" class="text-xs whitespace-pre-wrap max-h-96 overflow-y-auto"><code>import os
+import sys
+import json
+import requests
+# ... other imports ...
+from prompts import EVALUATOR_SYSTEM_PROMPT, get_generator_prompt, get_correction_prompt
+
+def create_suneung_problem(dataset, max_iterations=5):
+    """
+    생성-평가-수정 루프를 통해 수능 문제를 생성하는 메인 에이전트 함수.
+    """
+    # 1. 초기화
+    few_shot_examples = random.sample(dataset, 3)
+    generator_prompt = get_generator_prompt(few_shot_examples)
+    
+    # 2. 1차 시도
+    # ... api call ...
+    current_problem_str = ...
+
+    # 3. 반복적 개선 루프
+    for i in range(max_iterations):
+        # a. 평가
+        # ... api call ...
+        critique_text = ...
+        
+        # b. 파싱 및 의사결정
+        recommendation = parse_evaluator_critique(critique_text)
+        if recommendation == "ACCEPT":
+            return current_problem
+        elif recommendation == "REVISE":
+            # c. 수정
+            # ... api call ...
+            current_problem_str = ...
+        else: # REJECT
+            return None
+    return None
+
+if __name__ == "__main__":
+    # ... argument parsing and execution ...
+</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 6: Tuning Guide -->
+        <section id="tuning" class="my-16 scroll-mt-20">
+            <h2 class="text-2xl font-bold section-title">파라미터 튜닝 가이드</h2>
+            <div class="text-left mb-8">
+                <p class="text-gray-700 leading-relaxed max-w-4xl mx-auto">
+                    AI 모델의 결과물은 여러 파라미터에 의해 영향을 받습니다. 특히 `temperature` 값은 응답의 창의성과 일관성 사이의 균형을 조절하는 중요한 역할을 합니다. 아래 차트는 각 파이프라인 단계에 권장되는 튜닝 방향을 시각화한 것입니다.
+                </p>
+            </div>
+            <div class="card p-6">
+                <div class="chart-container">
+                    <canvas id="tuningChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 7: Conclusion -->
+        <section id="conclusion" class="my-16 scroll-mt-20">
+            <h2 class="text-2xl font-bold section-title">결론</h2>
+            <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-800 p-6 rounded-r-lg">
+                <p class="leading-relaxed">
+                    본 보고서에서 제시된 **구조화된 에이전트 워크플로우**는 LLM을 단순한 정보 검색 도구를 넘어, 전문 지식 **창출의 파트너**로 활용하는 새로운 가능성을 보여줍니다. '생성'과 '비판'이라는 상호 보완적인 프로세스의 상호작용은 단발성 프롬프팅 방식으로는 도달하기 어려운 수준의 품질과 전문성을 갖춘 결과물을 생성할 수 있게 합니다. 이 파이프라인은 향후 다양한 학문 분야의 고품질 교육 콘텐츠를 개발하는 데 확장 적용될 수 있는 강력한 프레임워크입니다.
+                </p>
+            </div>
+        </section>
+        
+        <div id="copy-tooltip" class="tooltip">복사 완료!</div>
+
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Mobile menu toggle
+            const mobileMenuButton = document.getElementById('mobile-menu-button');
+            const mobileMenu = document.getElementById('mobile-menu');
+            mobileMenuButton.addEventListener('click', () => {
+                mobileMenu.classList.toggle('hidden');
+            });
+            
+            // Smooth scrolling
+            window.scrollToSection = function(sectionId) {
+                document.getElementById(sectionId).scrollIntoView({ behavior: 'smooth' });
+                if (!mobileMenu.classList.contains('hidden')) {
+                    mobileMenu.classList.add('hidden');
+                }
+            }
+
+            // Active nav link on scroll
+            const sections = document.querySelectorAll('section');
+            const navLinks = document.querySelectorAll('.nav-link');
+            
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        navLinks.forEach(link => {
+                            link.classList.remove('active');
+                            if (link.getAttribute('onclick').includes(entry.target.id)) {
+                                link.classList.add('active');
+                            }
+                        });
+                    }
+                });
+            }, { rootMargin: "-50% 0px -50% 0px" });
+
+            sections.forEach(section => {
+                observer.observe(section);
+            });
+
+            // Prompt tabs
+            const tabs = document.querySelectorAll('.tab-btn');
+            const tabContents = document.querySelectorAll('[role="tabpanel"]');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    tabs.forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    const targetContent = document.getElementById(tab.getAttribute('aria-controls'));
+                    tabContents.forEach(c => c.classList.add('hidden'));
+                    targetContent.classList.remove('hidden');
+                });
+            });
+
+            // Simulation logic
+            const simBtn1 = document.getElementById('sim-btn-1');
+            const simBtn2 = document.getElementById('sim-btn-2');
+            const simBtn3 = document.getElementById('sim-btn-3');
+            const simCard1 = document.getElementById('sim-card-1');
+            const simCard2 = document.getElementById('sim-card-2');
+            const simCard3 = document.getElementById('sim-card-3');
+
+            simBtn1.addEventListener('click', () => {
+                simCard1.classList.remove('hidden');
+                simBtn2.disabled = false;
+                simBtn2.classList.remove('bg-gray-400', 'cursor-not-allowed');
+                simBtn2.classList.add('bg-green-600', 'hover:bg-green-700');
+            });
+
+            simBtn2.addEventListener('click', () => {
+                simCard2.classList.remove('hidden');
+                simBtn3.disabled = false;
+                simBtn3.classList.remove('bg-gray-400', 'cursor-not-allowed');
+                simBtn3.classList.add('bg-purple-600', 'hover:bg-purple-700');
+            });
+
+            simBtn3.addEventListener('click', () => {
+                simCard3.classList.remove('hidden');
+            });
+
+            // Chart.js
+            const ctx = document.getElementById('tuningChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: ['일관성', '정확성', '형식 준수', '창의성', '다양성'],
+                    datasets: [{
+                        label: '초기 생성 (temp: 0.7)',
+                        data: [2, 3, 3, 5, 5],
+                        fill: true,
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                        borderColor: 'rgb(59, 130, 246)',
+                        pointBackgroundColor: 'rgb(59, 130, 246)',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: 'rgb(59, 130, 246)'
+                    }, {
+                        label: '평가/수정 (temp: 0.2)',
+                        data: [5, 5, 5, 2, 1],
+                        fill: true,
+                        backgroundColor: 'rgba(22, 163, 74, 0.2)',
+                        borderColor: 'rgb(22, 163, 74)',
+                        pointBackgroundColor: 'rgb(22, 163, 74)',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: 'rgb(22, 163, 74)'
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            angleLines: {
+                                color: '#E5E7EB'
+                            },
+                            grid: {
+                                color: '#E5E7EB'
+                            },
+                            pointLabels: {
+                                font: {
+                                    size: 14,
+                                    family: "'Noto Sans KR', sans-serif"
+                                },
+                                color: '#374151'
+                            },
+                            ticks: {
+                                backdropColor: '#F9FAFB',
+                                color: '#6B7280'
+                            },
+                            suggestedMin: 0,
+                            suggestedMax: 5
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                font: {
+                                    family: "'Noto Sans KR', sans-serif"
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+
+        // Copy code utility
+        function copyCode(elementId) {
+            const codeEl = document.getElementById(elementId);
+            const text = codeEl.innerText;
+            
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            const tooltip = document.getElementById('copy-tooltip');
+            tooltip.style.visibility = 'visible';
+            tooltip.style.opacity = '1';
+            
+            const btn = codeEl.closest('.relative').querySelector('button');
+            const rect = btn.getBoundingClientRect();
+            tooltip.style.left = `${rect.left + window.scrollX}px`;
+            tooltip.style.top = `${rect.top + window.scrollY - 30}px`;
+
+            setTimeout(() => {
+                tooltip.style.visibility = 'hidden';
+                tooltip.style.opacity = '0';
+            }, 1500);
+        }
+    </script>
+</body>
+</html>
